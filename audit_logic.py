@@ -9,8 +9,21 @@ def process_schedule(schedule_df):
 def process_invoice(invoice_df):
     invoice_df['Date'] = pd.to_datetime(invoice_df['Date'], format='%m-%d-%Y')
     invoice_df['Week'] = (invoice_df['Date'].dt.day - 1) // 7 + 1
-    invoice_df['Time'] = pd.to_datetime(invoice_df['Time']).dt.strftime('%I:%M %p').str.lower()
+    invoice_df['Time'] = pd.to_datetime(invoice_df['Time'], format='%H:%M:%S')
     return invoice_df
+
+def parse_time(time_str):
+    time_str = time_str.lower().strip()
+    if ':' in time_str:
+        # Handle cases like '7:59am' or '11:30 pm'
+        return datetime.strptime(time_str, '%I:%M%p')
+    elif time_str.endswith('am') or time_str.endswith('pm'):
+        # Handle cases like '7am' or '11pm'
+        return datetime.strptime(time_str, '%I%p')
+    else:
+        # Handle cases like '7:00' or '23:59'
+        return datetime.strptime(time_str, '%H:%M')
+
 
 def compare_schedule_invoice(schedule, invoice):
     results = {}
@@ -29,7 +42,17 @@ def compare_schedule_invoice(schedule, invoice):
 
             for timeslot in timeslots:
                 slot_schedule = week_schedule[week_schedule['Time'] == timeslot]
-                slot_invoice = week_invoice[week_invoice['Time'].str.startswith(timeslot.split('-')[0])]
+                slot_start_time = parse_time(timeslot.split('-')[0])
+                slot_end_time = parse_time(timeslot.split('-')[1])
+                
+                # Add tolerance
+                slot_start_with_tolerance = (slot_start_time - timedelta(minutes=3)).time()
+                slot_end_with_tolerance = (slot_end_time + timedelta(minutes=3)).time()
+
+                slot_invoice = week_invoice[
+                    (week_invoice['Time'].dt.time >= slot_start_with_tolerance) &
+                    (week_invoice['Time'].dt.time <= slot_end_with_tolerance)
+                ]
 
                 scheduled_spots = slot_schedule['Spots'].sum()
                 scheduled_value = (slot_schedule['Spots'] * slot_schedule['Cost']).sum()
@@ -38,19 +61,66 @@ def compare_schedule_invoice(schedule, invoice):
                 pre_empted_spots = max(0, scheduled_spots - aired_spots)
                 pre_empted_value = pre_empted_spots * slot_schedule['Cost'].iloc[0]
 
+                extra_spots = max(0, aired_spots - scheduled_spots)
+                extra_value = extra_spots * slot_schedule['Cost'].iloc[0]
+
                 week_results.append({
                     'timeslot': timeslot.split('-')[0],
                     'scheduled_spots': scheduled_spots,
                     'scheduled_value': scheduled_value,
+                    'aired_spots': aired_spots,
                     'pre_empted_spots': pre_empted_spots,
-                    'pre_empted_value': pre_empted_value
+                    'pre_empted_value': pre_empted_value,
+                    'extra_spots': extra_spots,
+                    'extra_value': extra_value
                 })
 
+            # Check for spots that aired outside their scheduled slots
+            for _, spot in week_invoice.iterrows():
+                spot_time = spot['Time'].time()
+                scheduled_slot = None
+                for timeslot in timeslots:
+                    slot_start_time = parse_time(timeslot.split('-')[0])
+                    slot_end_time = parse_time(timeslot.split('-')[1])
+                    slot_start_with_tolerance = (slot_start_time - timedelta(minutes=3)).time()
+                    slot_end_with_tolerance = (slot_end_time + timedelta(minutes=3)).time()
+                    if slot_start_with_tolerance <= spot_time <= slot_end_with_tolerance:
+                        scheduled_slot = timeslot
+                        break
+                
+                if scheduled_slot is None:
+                    # Spot aired outside of any scheduled slot
+                    actual_slot = f"{spot_time.strftime('%I:%M %p')}-{(datetime.combine(datetime.min, spot_time) + timedelta(hours=1)).time().strftime('%I:%M %p')}"
+                    for result in week_results:
+                        if result['timeslot'] == actual_slot.split('-')[0]:
+                            result['extra_spots'] += 1
+                            result['extra_value'] += spot['Rate']
+                            break
+                    else:
+                        week_results.append({
+                            'timeslot': actual_slot.split('-')[0],
+                            'scheduled_spots': 0,
+                            'scheduled_value': 0,
+                            'aired_spots': 0,
+                            'pre_empted_spots': 0,
+                            'pre_empted_value': 0,
+                            'extra_spots': 1,
+                            'extra_value': spot['Rate']
+                        })
+
             if network not in results:
-                results[network] = {'total_pre_empted_spots': 0, 'total_pre_empted_value': 0, 'weeks': []}
+                results[network] = {
+                    'total_pre_empted_spots': 0,
+                    'total_pre_empted_value': 0,
+                    'total_extra_spots': 0,
+                    'total_extra_value': 0,
+                    'weeks': []
+                }
 
             results[network]['total_pre_empted_spots'] += sum(slot['pre_empted_spots'] for slot in week_results)
             results[network]['total_pre_empted_value'] += sum(slot['pre_empted_value'] for slot in week_results)
+            results[network]['total_extra_spots'] += sum(slot['extra_spots'] for slot in week_results)
+            results[network]['total_extra_value'] += sum(slot['extra_value'] for slot in week_results)
             results[network]['weeks'].append({
                 'week': week,
                 'slots': week_results
@@ -77,18 +147,24 @@ def generate_report(results):
             total_pre_empted = sum(slot['pre_empted_spots'] for slot in week['slots'])
             total_pre_empted_value = sum(slot['pre_empted_value'] for slot in week['slots'])
             
-            all_spots_ran = all(slot['pre_empted_spots'] == 0 for slot in week['slots'])
-            
             for slot in week['slots']:
                 if slot['scheduled_spots'] > 0:
-                    network_report.append(f"{slot['scheduled_spots']} spot{'s' if slot['scheduled_spots'] > 1 else ''} were scheduled to run at {slot['timeslot']} at a value of ${slot['scheduled_value'] / slot['scheduled_spots']:.0f} each")
+                    network_report.append(f"{slot['scheduled_spots']} spot{'s' if slot['scheduled_spots'] > 1 else ''} {'were' if slot['scheduled_spots'] > 1 else 'was'} scheduled to run at {slot['timeslot']} at a value of ${slot['scheduled_value'] / slot['scheduled_spots']:.0f} each")
+                
                 if slot['pre_empted_spots'] > 0:
-                    network_report.append(f"{slot['pre_empted_spots']} spot{'s were' if slot['pre_empted_spots'] > 1 else ' was'} pre-empted at a value of ${slot['pre_empted_value'] / slot['pre_empted_spots']:.0f} each")
+                    network_report.append(f"{slot['pre_empted_spots']} spot{'s' if slot['pre_empted_spots'] > 1 else ''} {'were' if slot['pre_empted_spots'] > 1 else 'was'} pre-empted at a value of ${slot['pre_empted_value'] / slot['pre_empted_spots']:.0f}")
+                elif slot['aired_spots'] == slot['scheduled_spots']:
+                    network_report.append(f"Spots ran as scheduled at {slot['timeslot']}")
+                
+                if slot['extra_spots'] > 0:
+                    network_report.append(f"{slot['extra_spots']} extra spot{'s' if slot['extra_spots'] > 1 else ''} ran at {slot['timeslot']} at a value of ${slot['extra_value'] / slot['extra_spots']:.0f} each")
             
-            if all_spots_ran:
+            if total_pre_empted == 0:
                 network_report.append("Spots ran as scheduled")
+                network_report.append("0 total spots were pre-empted")
+                network_report.append("Total pre-empted value is $0")
             else:
-                network_report.append(f"{total_pre_empted} total spot{'s were' if total_pre_empted > 1 else ' was'} pre-empted")
+                network_report.append(f"{total_pre_empted} total spot{'s' if total_pre_empted > 1 else ''} {'were' if total_pre_empted > 1 else 'was'} pre-empted")
                 network_report.append(f"Total pre-empted value is ${total_pre_empted_value:.0f}")
             
             network_report.append("")  # Empty line between weeks
@@ -96,8 +172,8 @@ def generate_report(results):
         network_report.extend([
             f"Total pre-empted spots for {network} = {data['total_pre_empted_spots']}",
             f"Total pre-empted value for {network} = ${data['total_pre_empted_value']:.0f}",
-            f"Total extra Spots for {network} = 0",
-            f"Total extra value for {network} = $0",
+            f"Total extra spots for {network} = {data['total_extra_spots']}",
+            f"Total extra value for {network} = ${data['total_extra_value']:.0f}",
             ""  # Empty line between networks
         ])
         report.extend(network_report)
