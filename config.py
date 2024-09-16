@@ -1,12 +1,8 @@
-# File paths
-SCHEDULE_FILE = "schedule.csv"
-INVOICE_FILE = "invoice.csv"
-
 # Date format
-DATE_FORMAT = "%Y-%m-%d"
+DATE_FORMAT = "%m-%d-%Y"  # Adjusted to match your CSV date format
 
 # Time format
-TIME_FORMAT = "%I:%M %p"
+TIME_FORMAT = "%H:%M:%S"  # Adjusted to match your CSV time format
 
 # Currency symbol
 CURRENCY_SYMBOL = "$"
