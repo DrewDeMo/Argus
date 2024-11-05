@@ -16,10 +16,14 @@ def process_invoice(invoice_df):
     except ValueError as e:
         raise ValueError(f"Error parsing 'Date' column: {e}")
 
-    # Get the earliest date in the invoice data
+    # Get the earliest and latest dates in the invoice data
     min_date = invoice_df["Date"].min()
-
-    # Define week boundaries
+    
+    # Ensure min_date starts at the beginning of the week (Monday)
+    while min_date.weekday() != 0:  # 0 = Monday
+        min_date = min_date - pd.Timedelta(days=1)
+    
+    # Define week boundaries starting from Monday
     week_starts = [min_date + pd.Timedelta(days=7 * i) for i in range(4)]
     week_ends = [start + pd.Timedelta(days=6) for start in week_starts]
 
@@ -166,6 +170,7 @@ def compare_schedule_invoice(schedule, invoice):
             results[network]["weeks"].append(
                 {
                     "week": week_num,
+                    "start_date": week_starts[week_num - 1],
                     "slots": week_results,
                 }
             )
@@ -182,17 +187,15 @@ def get_ordinal_suffix(n):
 
 
 def generate_report(results, invoice_df):
-    # Get the month name from the invoice data
-    month = invoice_df["Date"].min().strftime("%B")
-    
     report = []
     for network, data in results.items():
         network_report = [f"{network}"]
         for week in data["weeks"]:
-            week_num = week["week"]
-            week_start = 1 + (week_num - 1) * 7
-            ordinal_suffix = get_ordinal_suffix(week_start)
-            network_report.append(f"Week of {month} {week_start}{ordinal_suffix}")
+            week_start = week["start_date"]
+            month = week_start.strftime("%B")
+            day = week_start.day
+            ordinal_suffix = get_ordinal_suffix(day)
+            network_report.append(f"Week of {month} {day}{ordinal_suffix}")
 
             total_pre_empted = sum(
                 slot["pre_empted_spots"] for slot in week["slots"]
