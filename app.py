@@ -63,7 +63,7 @@ if invoice_file is not None:
         schedule = process_schedule(spectrum_schedule)
         invoice = process_invoice(invoice_df)
         results = compare_schedule_invoice(schedule, invoice)
-        report = generate_report(results)
+        report = generate_report(results, invoice)
 
         st.subheader("Audit Report")
         for line in report:
