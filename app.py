@@ -60,10 +60,15 @@ if invoice_file is not None:
         }
         invoice_df.rename(columns=column_mapping, inplace=True)
 
-        schedule = process_schedule(spectrum_schedule)
-        invoice = process_invoice(invoice_df)
-        results = compare_schedule_invoice(schedule, invoice)
-        report = generate_report(results, invoice)
+        # Process invoice first to get number of weeks
+        invoice_processed, num_weeks = process_invoice(invoice_df)
+        
+        # Process schedule with dynamic week count
+        schedule = process_schedule(spectrum_schedule, num_weeks)
+        
+        # Compare using dynamic week count
+        results = compare_schedule_invoice(schedule, invoice_processed, num_weeks)
+        report = generate_report(results, invoice_processed)
 
         st.subheader("Audit Report")
         for line in report:
