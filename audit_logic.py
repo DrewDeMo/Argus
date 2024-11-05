@@ -40,6 +40,9 @@ def process_invoice(invoice_df):
 
     invoice_df["Time"] = pd.to_datetime(invoice_df["Time"], format="%H:%M:%S").dt.time
 
+    # Store week start dates in the DataFrame
+    invoice_df["WeekStart"] = invoice_df["Week"].apply(lambda x: week_starts[x - 1])
+
     return invoice_df
 
 
@@ -67,6 +70,11 @@ def compare_schedule_invoice(schedule, invoice):
         for week_num in range(1, 5):
             week_schedule = network_schedule[network_schedule["Week"] == week_num]
             week_invoice = network_invoice[network_invoice["Week"] == week_num]
+            
+            # Get the week start date from any row in week_invoice
+            week_start = None
+            if not week_invoice.empty:
+                week_start = week_invoice.iloc[0]["WeekStart"]
 
             timeslots = week_schedule["Time"].unique()
             week_results = []
@@ -170,7 +178,7 @@ def compare_schedule_invoice(schedule, invoice):
             results[network]["weeks"].append(
                 {
                     "week": week_num,
-                    "start_date": week_starts[week_num - 1],
+                    "start_date": week_start,
                     "slots": week_results,
                 }
             )
@@ -191,6 +199,9 @@ def generate_report(results, invoice_df):
     for network, data in results.items():
         network_report = [f"{network}"]
         for week in data["weeks"]:
+            if week["start_date"] is None:
+                continue
+                
             week_start = week["start_date"]
             month = week_start.strftime("%B")
             day = week_start.day
