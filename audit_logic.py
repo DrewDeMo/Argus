@@ -126,7 +126,7 @@ def compare_schedule_invoice(schedule, invoice, num_weeks):
                 pre_empted_value = pre_empted_spots * scheduled["cost_per_spot"]
 
                 extra_spots = max(0, aired_spots - scheduled["scheduled_spots"])
-                extra_value = extra_spots * scheduled["cost_per_spot"] if scheduled["cost_per_spot"] > 0 else sum(spot["Amount"] for spot in aired[:extra_spots])
+                extra_value = extra_spots * scheduled["cost_per_spot"] if scheduled["cost_per_spot"] > 0 else sum(spot["Rate"] for spot in aired[:extra_spots])
 
                 # Format the hour in 12-hour format
                 hour_str = datetime.strptime(f"{hour}:00", "%H:%M").strftime("%I:%M %p").lstrip("0")
