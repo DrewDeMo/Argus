@@ -181,7 +181,10 @@ def get_ordinal_suffix(n):
     return suffix
 
 
-def generate_report(results):
+def generate_report(results, invoice_df):
+    # Get the month name from the invoice data
+    month = invoice_df["Date"].min().strftime("%B")
+    
     report = []
     for network, data in results.items():
         network_report = [f"{network}"]
@@ -189,7 +192,7 @@ def generate_report(results):
             week_num = week["week"]
             week_start = 1 + (week_num - 1) * 7
             ordinal_suffix = get_ordinal_suffix(week_start)
-            network_report.append(f"Week of April {week_start}{ordinal_suffix}")
+            network_report.append(f"Week of {month} {week_start}{ordinal_suffix}")
 
             total_pre_empted = sum(
                 slot["pre_empted_spots"] for slot in week["slots"]
