@@ -4,8 +4,9 @@ from datetime import datetime, timedelta
 from config import DATE_FORMAT, TIME_FORMAT
 
 
-def process_schedule(schedule_df):
-    repeated_schedule = pd.concat([schedule_df] * 4, ignore_index=True)
+def process_schedule(schedule_df, num_weeks):
+    """Process schedule with dynamic week count based on invoice date range."""
+    repeated_schedule = pd.concat([schedule_df] * num_weeks, ignore_index=True)
     repeated_schedule["Week"] = repeated_schedule.index // len(schedule_df) + 1
     return repeated_schedule
 
@@ -18,13 +19,22 @@ def process_invoice(invoice_df):
 
     # Get the earliest and latest dates in the invoice data
     min_date = invoice_df["Date"].min()
+    max_date = invoice_df["Date"].max()
     
     # Ensure min_date starts at the beginning of the week (Monday)
     while min_date.weekday() != 0:  # 0 = Monday
         min_date = min_date - pd.Timedelta(days=1)
     
+    # Ensure max_date ends at the end of the week (Sunday)
+    while max_date.weekday() != 6:  # 6 = Sunday
+        max_date = max_date + pd.Timedelta(days=1)
+    
+    # Calculate total number of weeks
+    total_days = (max_date - min_date).days + 1
+    num_weeks = (total_days + 6) // 7  # Round up to include partial weeks
+    
     # Define week boundaries starting from Monday
-    week_starts = [min_date + pd.Timedelta(days=7 * i) for i in range(4)]
+    week_starts = [min_date + pd.Timedelta(days=7 * i) for i in range(num_weeks)]
     week_ends = [start + pd.Timedelta(days=6) for start in week_starts]
 
     def assign_week(date):
@@ -42,8 +52,8 @@ def process_invoice(invoice_df):
 
     # Store week start dates in the DataFrame, ensuring week numbers are integers
     invoice_df["WeekStart"] = invoice_df["Week"].apply(lambda x: week_starts[int(x - 1)] if pd.notnull(x) else None)
-
-    return invoice_df
+    
+    return invoice_df, num_weeks
 
 
 def parse_time(time_str):
@@ -64,7 +74,7 @@ def get_hour_from_time(time_obj):
     return datetime.combine(datetime.min, time_obj).replace(minute=0, second=0, microsecond=0)
 
 
-def compare_schedule_invoice(schedule, invoice):
+def compare_schedule_invoice(schedule, invoice, num_weeks):
     results = {}
     networks = schedule["Network"].unique()
 
@@ -72,7 +82,7 @@ def compare_schedule_invoice(schedule, invoice):
         network_schedule = schedule[schedule["Network"] == network]
         network_invoice = invoice[invoice["Network"] == network]
 
-        for week_num in range(1, 5):
+        for week_num in range(1, num_weeks + 1):
             week_schedule = network_schedule[network_schedule["Week"] == week_num]
             week_invoice = network_invoice[network_invoice["Week"] == week_num]
             
@@ -116,7 +126,7 @@ def compare_schedule_invoice(schedule, invoice):
                 pre_empted_value = pre_empted_spots * scheduled["cost_per_spot"]
 
                 extra_spots = max(0, aired_spots - scheduled["scheduled_spots"])
-                extra_value = extra_spots * scheduled["cost_per_spot"] if scheduled["cost_per_spot"] > 0 else sum(spot["Rate"] for spot in aired[:extra_spots])
+                extra_value = extra_spots * scheduled["cost_per_spot"] if scheduled["cost_per_spot"] > 0 else sum(spot["Amount"] for spot in aired[:extra_spots])
 
                 # Format the hour in 12-hour format
                 hour_str = datetime.strptime(f"{hour}:00", "%H:%M").strftime("%I:%M %p").lstrip("0")

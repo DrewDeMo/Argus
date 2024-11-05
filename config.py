@@ -9,6 +9,3 @@ CURRENCY_SYMBOL = "$"
 
 # Decimal places for monetary values
 DECIMAL_PLACES = 2
-
-# Number of weeks to process
-WEEKS_TO_PROCESS = 4
