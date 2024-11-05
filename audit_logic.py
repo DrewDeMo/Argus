@@ -40,8 +40,8 @@ def process_invoice(invoice_df):
 
     invoice_df["Time"] = pd.to_datetime(invoice_df["Time"], format="%H:%M:%S").dt.time
 
-    # Store week start dates in the DataFrame
-    invoice_df["WeekStart"] = invoice_df["Week"].apply(lambda x: week_starts[x - 1])
+    # Store week start dates in the DataFrame, ensuring week numbers are integers
+    invoice_df["WeekStart"] = invoice_df["Week"].apply(lambda x: week_starts[int(x - 1)] if pd.notnull(x) else None)
 
     return invoice_df
 
