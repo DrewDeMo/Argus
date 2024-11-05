@@ -59,6 +59,11 @@ def parse_time(time_str):
         return datetime.strptime(time_str, "%H:%M")
 
 
+def get_hour_from_time(time_obj):
+    """Extract the hour from a time object and return it as a datetime for the start of that hour."""
+    return datetime.combine(datetime.min, time_obj).replace(minute=0, second=0, microsecond=0)
+
+
 def compare_schedule_invoice(schedule, invoice):
     results = {}
     networks = schedule["Network"].unique()
@@ -76,83 +81,56 @@ def compare_schedule_invoice(schedule, invoice):
             if not week_invoice.empty:
                 week_start = week_invoice.iloc[0]["WeekStart"]
 
-            timeslots = week_schedule["Time"].unique()
-            week_results = []
-
-            for timeslot in timeslots:
-                slot_schedule = week_schedule[week_schedule["Time"] == timeslot]
-                slot_start_time = parse_time(timeslot.split("-")[0])
-                slot_end_time = parse_time(timeslot.split("-")[1])
-
-                slot_start_with_tolerance = (
-                    slot_start_time - timedelta(minutes=3)
-                ).time()
-                slot_end_with_tolerance = (slot_end_time + timedelta(minutes=3)).time()
-
-                slot_invoice = week_invoice[
-                    (week_invoice["Time"] >= slot_start_with_tolerance)
-                    & (week_invoice["Time"] <= slot_end_with_tolerance)
-                ]
-
-                scheduled_spots = slot_schedule["Spots"].sum()
-                scheduled_value = (
-                    slot_schedule["Spots"] * slot_schedule["Cost"]
-                ).sum()
-
-                aired_spots = len(slot_invoice)
-                pre_empted_spots = max(0, scheduled_spots - aired_spots)
-                pre_empted_value = pre_empted_spots * slot_schedule["Cost"].iloc[0]
-
-                extra_spots = max(0, aired_spots - scheduled_spots)
-                extra_value = extra_spots * slot_schedule["Cost"].iloc[0]
-
-                week_results.append(
-                    {
-                        "timeslot": timeslot.split("-")[0],
-                        "scheduled_spots": scheduled_spots,
-                        "scheduled_value": scheduled_value,
-                        "aired_spots": aired_spots,
-                        "pre_empted_spots": pre_empted_spots,
-                        "pre_empted_value": pre_empted_value,
-                        "extra_spots": extra_spots,
-                        "extra_value": extra_value,
+            # Group schedule by hour
+            hour_schedule = {}
+            for _, row in week_schedule.iterrows():
+                slot_start = parse_time(row["Time"].split("-")[0])
+                hour = slot_start.hour
+                if hour not in hour_schedule:
+                    hour_schedule[hour] = {
+                        "scheduled_spots": 0,
+                        "scheduled_value": 0,
+                        "cost_per_spot": row["Cost"]
                     }
-                )
+                hour_schedule[hour]["scheduled_spots"] += row["Spots"]
+                hour_schedule[hour]["scheduled_value"] += row["Spots"] * row["Cost"]
 
-            # Check for spots that aired outside their scheduled slots
+            # Group invoice spots by hour
+            hour_invoice = {}
             for _, spot in week_invoice.iterrows():
-                spot_time = spot["Time"]
-                scheduled_slot = None
-                for timeslot in timeslots:
-                    slot_start_time = parse_time(timeslot.split("-")[0])
-                    slot_end_time = parse_time(timeslot.split("-")[1])
-                    slot_start_with_tolerance = (slot_start_time - timedelta(minutes=3)).time()
-                    slot_end_with_tolerance = (slot_end_time + timedelta(minutes=3)).time()
-                    if slot_start_with_tolerance <= spot_time <= slot_end_with_tolerance:
-                        scheduled_slot = timeslot
-                        break
+                hour = spot["Time"].hour
+                if hour not in hour_invoice:
+                    hour_invoice[hour] = []
+                hour_invoice[hour].append(spot)
 
-                if scheduled_slot is None:
-                    # Spot aired outside of any scheduled slot
-                    actual_slot = f"{spot_time.strftime('%I:%M %p')}-{(datetime.combine(datetime.min, spot_time) + timedelta(hours=1)).time().strftime('%I:%M %p')}"
-                    for result in week_results:
-                        if result["timeslot"] == actual_slot.split("-")[0]:
-                            result["extra_spots"] += 1
-                            result["extra_value"] += spot["Rate"]
-                            break
-                    else:
-                        week_results.append(
-                            {
-                                "timeslot": actual_slot.split("-")[0],
-                                "scheduled_spots": 0,
-                                "scheduled_value": 0,
-                                "aired_spots": 0,
-                                "pre_empted_spots": 0,
-                                "pre_empted_value": 0,
-                                "extra_spots": 1,
-                                "extra_value": spot["Rate"],
-                            }
-                        )
+            # Compare scheduled vs aired spots for each hour
+            week_results = []
+            all_hours = sorted(set(list(hour_schedule.keys()) + list(hour_invoice.keys())))
+
+            for hour in all_hours:
+                scheduled = hour_schedule.get(hour, {"scheduled_spots": 0, "scheduled_value": 0, "cost_per_spot": 0})
+                aired = hour_invoice.get(hour, [])
+                aired_spots = len(aired)
+
+                pre_empted_spots = max(0, scheduled["scheduled_spots"] - aired_spots)
+                pre_empted_value = pre_empted_spots * scheduled["cost_per_spot"]
+
+                extra_spots = max(0, aired_spots - scheduled["scheduled_spots"])
+                extra_value = extra_spots * scheduled["cost_per_spot"] if scheduled["cost_per_spot"] > 0 else sum(spot["Rate"] for spot in aired[:extra_spots])
+
+                # Format the hour in 12-hour format
+                hour_str = datetime.strptime(f"{hour}:00", "%H:%M").strftime("%I:%M %p").lstrip("0")
+
+                week_results.append({
+                    "timeslot": hour_str,
+                    "scheduled_spots": scheduled["scheduled_spots"],
+                    "scheduled_value": scheduled["scheduled_value"],
+                    "aired_spots": aired_spots,
+                    "pre_empted_spots": pre_empted_spots,
+                    "pre_empted_value": pre_empted_value,
+                    "extra_spots": extra_spots,
+                    "extra_value": extra_value
+                })
 
             if network not in results:
                 results[network] = {

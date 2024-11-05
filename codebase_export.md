@@ -72,7 +72,7 @@ if invoice_file is not None:
         schedule = process_schedule(spectrum_schedule)
         invoice = process_invoice(invoice_df)
         results = compare_schedule_invoice(schedule, invoice)
-        report = generate_report(results)
+        report = generate_report(results, invoice)
 
         st.subheader("Audit Report")
         for line in report:
@@ -259,10 +259,14 @@ def process_invoice(invoice_df):
     except ValueError as e:
         raise ValueError(f"Error parsing 'Date' column: {e}")
 
-    # Get the earliest date in the invoice data
+    # Get the earliest and latest dates in the invoice data
     min_date = invoice_df["Date"].min()
-
-    # Define week boundaries
+    
+    # Ensure min_date starts at the beginning of the week (Monday)
+    while min_date.weekday() != 0:  # 0 = Monday
+        min_date = min_date - pd.Timedelta(days=1)
+    
+    # Define week boundaries starting from Monday
     week_starts = [min_date + pd.Timedelta(days=7 * i) for i in range(4)]
     week_ends = [start + pd.Timedelta(days=6) for start in week_starts]
 
@@ -278,6 +282,9 @@ def process_invoice(invoice_df):
     invoice_df = invoice_df[invoice_df["Week"].notnull()]
 
     invoice_df["Time"] = pd.to_datetime(invoice_df["Time"], format="%H:%M:%S").dt.time
+
+    # Store week start dates in the DataFrame, ensuring week numbers are integers
+    invoice_df["WeekStart"] = invoice_df["Week"].apply(lambda x: week_starts[int(x - 1)] if pd.notnull(x) else None)
 
     return invoice_df
 
@@ -306,6 +313,11 @@ def compare_schedule_invoice(schedule, invoice):
         for week_num in range(1, 5):
             week_schedule = network_schedule[network_schedule["Week"] == week_num]
             week_invoice = network_invoice[network_invoice["Week"] == week_num]
+            
+            # Get the week start date from any row in week_invoice
+            week_start = None
+            if not week_invoice.empty:
+                week_start = week_invoice.iloc[0]["WeekStart"]
 
             timeslots = week_schedule["Time"].unique()
             week_results = []
@@ -409,6 +421,7 @@ def compare_schedule_invoice(schedule, invoice):
             results[network]["weeks"].append(
                 {
                     "week": week_num,
+                    "start_date": week_start,
                     "slots": week_results,
                 }
             )
@@ -424,15 +437,19 @@ def get_ordinal_suffix(n):
     return suffix
 
 
-def generate_report(results):
+def generate_report(results, invoice_df):
     report = []
     for network, data in results.items():
         network_report = [f"{network}"]
         for week in data["weeks"]:
-            week_num = week["week"]
-            week_start = 1 + (week_num - 1) * 7
-            ordinal_suffix = get_ordinal_suffix(week_start)
-            network_report.append(f"Week of April {week_start}{ordinal_suffix}")
+            if week["start_date"] is None:
+                continue
+                
+            week_start = week["start_date"]
+            month = week_start.strftime("%B")
+            day = week_start.day
+            ordinal_suffix = get_ordinal_suffix(day)
+            network_report.append(f"Week of {month} {day}{ordinal_suffix}")
 
             total_pre_empted = sum(
                 slot["pre_empted_spots"] for slot in week["slots"]
